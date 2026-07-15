@@ -3,6 +3,7 @@ seed: 42
 data:
   train_csv: data/train.csv
   test_csv: data/test.csv
+  raw_dir: data/UCI_HAR_Dataset
   synthetic_samples_train: 1200
   synthetic_samples_test: 300
   synthetic_n_features: 561
@@ -11,16 +12,23 @@ preprocess:
   val_split: 0.2
 
 model:
-  lstm_units_1: 100
-  lstm_units_2: 50
+  lstm_units_1: 64
+  lstm_units_2: 32
+  num_lstm_layers: 2
   dense_units: 50
   dropout: 0.2
+  learning_rate: 0.001
 
 train:
-  epochs: 100
-  batch_size: 32
-  early_stopping_patience: 15
+  epochs: 60
+  batch_size: 64
+  early_stopping_patience: 10
   monitor: val_accuracy
+
+tuning:
+  max_trials: 15
+  epochs_per_trial: 10
+  executions_per_trial: 1
 
 paths:
   outputs_dir: outputs

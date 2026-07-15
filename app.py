@@ -4,7 +4,7 @@ Run with: streamlit run app.py
 
 Loads precomputed artifacts from outputs/ (produced by `python -m deephar.train`
 or the Training tab) when present. Otherwise every tab falls back to a small,
-in-memory synthetic run so the whole app still renders.
+explicitly-labeled demo run on synthetic data so the whole app still renders.
 """
 from __future__ import annotations
 
@@ -26,10 +26,8 @@ import plotly.graph_objects as go
 import streamlit as st
 
 from deephar.config import load_config, set_global_seed
-from deephar.data import ACTIVITY_LABELS, load_data
-from deephar.model import build_rnn_model
-from deephar.preprocess import prepare_data
-from deephar.train import train_rnn_model
+from deephar.data import ACTIVITY_LABELS, SIGNAL_CHANNELS, load_feature_csv_data, load_signal_data
+from deephar.preprocess import split_features_labels
 
 st.set_page_config(page_title="DeepHAR", page_icon="\U0001f3c3", layout="wide")
 
@@ -47,8 +45,9 @@ def get_demo_config():
     cfg.paths.metrics_dir = cfg.paths.outputs_dir / "metrics"
     cfg.data.synthetic_samples_train = 400
     cfg.data.synthetic_samples_test = 120
-    cfg.data.synthetic_n_features = 80
     cfg.train.epochs = 6
+    cfg.tuning.max_trials = 2
+    cfg.tuning.epochs_per_trial = 3
     return cfg
 
 
@@ -64,7 +63,7 @@ def ensure_demo_artifacts():
     if not artifacts_present(cfg):
         from deephar.train import run_pipeline
 
-        run_pipeline(cfg)
+        run_pipeline(cfg, allow_synthetic=True, run_tuning=True)
     return cfg
 
 
@@ -76,8 +75,14 @@ def active_config():
 
 
 @st.cache_data(show_spinner=False)
-def load_raw_data(_cfg):
-    train_df, test_df, used_synthetic = load_data(_cfg)
+def load_raw_signals(_cfg, is_demo: bool):
+    train, test, used_synthetic = load_signal_data(_cfg, allow_synthetic=is_demo)
+    return train, test, used_synthetic
+
+
+@st.cache_data(show_spinner=False)
+def load_baseline_features(_cfg, is_demo: bool):
+    train_df, test_df, used_synthetic = load_feature_csv_data(_cfg, allow_synthetic=is_demo)
     return train_df, test_df, used_synthetic
 
 
@@ -97,11 +102,18 @@ def load_metrics(cfg):
         report = json.load(f)
     predictions_df = pd.read_csv(cfg.paths.metrics_dir / "predictions.csv")
     history_df = pd.read_csv(cfg.paths.metrics_dir / "training_history.csv")
-    return report, predictions_df, history_df
+    split_report_path = cfg.paths.metrics_dir / "split_comparison_report.txt"
+    split_report = split_report_path.read_text(encoding="utf-8") if split_report_path.exists() else None
+    return report, predictions_df, history_df, split_report
+
+
+def scale_signal_windows(X: np.ndarray, scaler) -> np.ndarray:
+    n_channels = X.shape[-1]
+    return scaler.transform(X.reshape(-1, n_channels)).reshape(X.shape)
 
 
 st.title("DeepHAR — Human Activity Recognition")
-st.caption("LSTM-based classifier for smartphone accelerometer/gyroscope activity data")
+st.caption("LSTM classifier over raw 128-timestep x 9-channel smartphone accelerometer/gyroscope windows")
 
 tabs = st.tabs(["Overview", "Data Explorer", "Training", "Performance", "Live Prediction"])
 
@@ -112,70 +124,81 @@ with tabs[0]:
     active_cfg, is_demo = active_config()
     st.subheader("Project Summary")
     st.write(
-        "DeepHAR trains a 2-layer LSTM classifier on the UCI HAR feature dataset "
-        "(561 engineered features per sample) to recognize six activities: "
-        + ", ".join(ACTIVITY_LABELS)
-        + "."
+        "DeepHAR trains an LSTM classifier directly on raw inertial-signal windows "
+        f"(128 timesteps x {len(SIGNAL_CHANNELS)} channels: body/total acceleration + "
+        "gyroscope, x/y/z) from the UCI HAR smartphone dataset, to recognize six "
+        "activities: " + ", ".join(ACTIVITY_LABELS) + ". A non-temporal Dense MLP over "
+        "the dataset's 561 pre-engineered features is trained alongside it as a baseline."
     )
     if is_demo:
-        st.info(
-            "No trained model found in `outputs/`. Showing metrics from an "
-            "auto-generated demo run on synthetic data. Use the Training tab "
-            "to train on real data (or a bigger synthetic run)."
+        st.warning(
+            "**DEMO MODE** — no trained model found in `outputs/`. Showing metrics from an "
+            "auto-generated run on SYNTHETIC data; these numbers are not real performance. "
+            "Use the Training tab (or `python -m deephar.train`) to train on the real dataset."
         )
 
     if artifacts_present(active_cfg):
-        report, predictions_df, history_df = load_metrics(active_cfg)
+        report, predictions_df, history_df, split_report = load_metrics(active_cfg)
         col1, col2, col3, col4 = st.columns(4)
-        col1.metric("Accuracy", f"{report['accuracy']:.2%}")
+        col1.metric("Test Accuracy (subject-independent)", f"{report['accuracy']:.2%}")
         col2.metric("Macro F1", f"{report['macro avg']['f1-score']:.3f}")
         col3.metric("Macro Precision", f"{report['macro avg']['precision']:.3f}")
         col4.metric("Macro Recall", f"{report['macro avg']['recall']:.3f}")
-        st.write(f"Trained for {len(history_df)} epochs.")
-
-    with st.expander("Known limitations"):
-        st.markdown(
-            "- The model sees each sample as a **single timestep** (pre-extracted "
-            "feature vectors have no time axis), so the LSTM behaves like a dense "
-            "layer. A temporally meaningful model would use the raw 128x9 "
-            "inertial-signal windows instead.\n"
-            "- No class weighting or hyperparameter search yet."
+        st.caption(
+            "Accuracy above uses a subject-independent (group) train/val split and the "
+            "real UCI HAR test set, whose 9 subjects never appear in training."
         )
+        if split_report:
+            with st.expander("Split-strategy comparison (subject-independent vs. same-subject-leakage)"):
+                st.text(split_report)
+    else:
+        st.info("No trained model found yet. Use the Training tab to train one.")
 
 # ---------------------------------------------------------------------------
 # Data Explorer
 # ---------------------------------------------------------------------------
 with tabs[1]:
     active_cfg, is_demo = active_config()
-    train_df, test_df, used_synthetic = load_raw_data(active_cfg)
+    train_signals, test_signals, used_synthetic = load_raw_signals(active_cfg, is_demo)
     if used_synthetic:
-        st.info("Showing synthetic demo data (no real dataset found in `data/`).")
+        st.warning("**DEMO MODE** — showing synthetic data (no real dataset found in `data/`).")
 
-    st.subheader("Class Distribution")
-    counts = train_df["Activity"].value_counts().reindex(ACTIVITY_LABELS).fillna(0)
+    st.subheader("Class Distribution (raw signal windows)")
+    counts = pd.Series(train_signals.y).value_counts().reindex(ACTIVITY_LABELS).fillna(0)
     fig = px.bar(
         x=counts.values, y=counts.index, orientation="h",
-        labels={"x": "Samples", "y": "Activity"}, color=counts.index,
+        labels={"x": "Windows", "y": "Activity"}, color=counts.index,
     )
     fig.update_layout(showlegend=False)
     st.plotly_chart(fig, use_container_width=True)
 
-    st.subheader("Sample Rows")
-    st.dataframe(train_df.head(20), use_container_width=True)
+    st.subheader("Sample Raw Signal Window per Activity")
+    channel = st.selectbox("Channel", SIGNAL_CHANNELS, index=SIGNAL_CHANNELS.index("total_acc_x"))
+    channel_idx = SIGNAL_CHANNELS.index(channel)
+    fig = go.Figure()
+    for label in ACTIVITY_LABELS:
+        idx = np.flatnonzero(train_signals.y == label)
+        if len(idx) == 0:
+            continue
+        window = train_signals.X[idx[0], :, channel_idx]
+        fig.add_scatter(y=window, name=label, mode="lines")
+    fig.update_layout(xaxis_title="Timestep (128 per 2.56s window)", yaxis_title=channel, title=f"One example window per activity — {channel}")
+    st.plotly_chart(fig, use_container_width=True)
 
-    st.subheader("Feature Statistics")
-    feature_cols = [c for c in train_df.columns if c not in ("subject", "Activity")]
-    st.dataframe(train_df[feature_cols].describe().T, use_container_width=True)
+    st.subheader("Baseline (561-feature) View")
+    st.caption("Pre-engineered feature CSVs, used only for the non-temporal Dense baseline.")
+    baseline_train_df, _, baseline_used_synthetic = load_baseline_features(active_cfg, is_demo)
+    feature_cols = [c for c in baseline_train_df.columns if c not in ("subject", "Activity")]
+    st.dataframe(baseline_train_df[feature_cols].describe().T.head(20), use_container_width=True)
 
-    st.subheader("PCA Scatter (2D projection of features)")
     from sklearn.decomposition import PCA
     from sklearn.preprocessing import StandardScaler
 
-    X = StandardScaler().fit_transform(train_df[feature_cols])
+    X = StandardScaler().fit_transform(baseline_train_df[feature_cols])
     coords = PCA(n_components=2).fit_transform(X)
     pca_df = pd.DataFrame(coords, columns=["PC1", "PC2"])
-    pca_df["Activity"] = train_df["Activity"].values
-    fig = px.scatter(pca_df, x="PC1", y="PC2", color="Activity", opacity=0.7)
+    pca_df["Activity"] = baseline_train_df["Activity"].values
+    fig = px.scatter(pca_df, x="PC1", y="PC2", color="Activity", opacity=0.7, title="PCA of engineered features by activity")
     st.plotly_chart(fig, use_container_width=True)
 
 # ---------------------------------------------------------------------------
@@ -184,11 +207,14 @@ with tabs[1]:
 with tabs[2]:
     st.subheader("Train a Model")
     st.write(
-        "Trains on `data/train.csv`/`data/test.csv` if present, otherwise on "
-        "synthetic data. Writes results to `outputs/` (overwriting any "
-        "previous real run)."
+        "Trains on the real dataset in `data/` if present, otherwise fails loudly unless "
+        "demo mode is selected below. Writes results to `outputs/` (overwriting any "
+        "previous real run). This trains the primary subject-independent-split LSTM, a "
+        "same-subject-leakage-split LSTM for comparison, and the Dense baseline."
     )
     epochs = st.slider("Epochs", min_value=1, max_value=100, value=15)
+    demo_mode = st.checkbox("Demo mode (synthetic data)", value=not (CONFIG.data.raw_dir.exists()))
+    run_tuning = st.checkbox("Run hyperparameter search first (slow)", value=False)
     run_clicked = st.button("Run Training", type="primary")
 
     if run_clicked:
@@ -196,16 +222,22 @@ with tabs[2]:
 
         run_cfg = load_config()
         run_cfg.train.epochs = epochs
-        with st.spinner("Training..."):
-            result = run_pipeline(run_cfg)
-        st.success(f"Done. Test accuracy: {result['accuracy']:.2%}")
-        st.cache_data.clear()
-        st.cache_resource.clear()
+        with st.spinner("Training... this can take a while, especially with tuning enabled."):
+            try:
+                result = run_pipeline(run_cfg, allow_synthetic=demo_mode, run_tuning=run_tuning)
+                st.success(
+                    f"Done. Subject-independent test accuracy: {result['accuracy']:.2%} "
+                    f"(baseline Dense: {result['baseline_dense_test_accuracy']:.2%})"
+                )
+                st.cache_data.clear()
+                st.cache_resource.clear()
+            except Exception as e:
+                st.error(f"Training failed: {e}")
 
     active_cfg, is_demo = active_config()
     if (active_cfg.paths.metrics_dir / "training_history.csv").exists():
         history_df = pd.read_csv(active_cfg.paths.metrics_dir / "training_history.csv")
-        st.subheader("Learning Curves" + (" (demo run)" if is_demo else ""))
+        st.subheader("Learning Curves (subject-independent split)" + (" (demo run)" if is_demo else ""))
         c1, c2 = st.columns(2)
         with c1:
             fig = go.Figure()
@@ -227,9 +259,9 @@ with tabs[2]:
 # ---------------------------------------------------------------------------
 with tabs[3]:
     active_cfg, is_demo = active_config()
-    report, predictions_df, history_df = load_metrics(active_cfg)
+    report, predictions_df, history_df, split_report = load_metrics(active_cfg)
     if is_demo:
-        st.info("Showing metrics from the auto-generated demo run.")
+        st.warning("**DEMO MODE** — showing metrics from the auto-generated synthetic-data run.")
 
     class_names = [c for c in report.keys() if c not in ("accuracy", "macro avg", "weighted avg")]
 
@@ -268,18 +300,15 @@ with tabs[3]:
     st.plotly_chart(fig, use_container_width=True)
 
     st.subheader("ROC Curves")
-    if artifacts_present(active_cfg) and (active_cfg.paths.models_dir / "har_model.keras").exists():
+    if artifacts_present(active_cfg):
         try:
             model, scaler, label_encoder = load_model_bundle(active_cfg)
-            _, test_df, _ = load_raw_data(active_cfg)
-            from deephar.preprocess import split_features_labels
+            _, test_signals, _ = load_raw_signals(active_cfg, is_demo)
             from sklearn.metrics import auc, roc_curve
 
-            X_test_raw, y_test_raw = split_features_labels(test_df)
-            X_test_scaled = scaler.transform(X_test_raw)
-            X_test_reshaped = X_test_scaled.reshape(X_test_scaled.shape[0], 1, X_test_scaled.shape[1])
-            y_test_encoded = label_encoder.transform(y_test_raw)
-            y_pred_prob = model.predict(X_test_reshaped, verbose=0)
+            X_test_scaled = scale_signal_windows(test_signals.X, scaler)
+            y_test_encoded = label_encoder.transform(test_signals.y)
+            y_pred_prob = model.predict(X_test_scaled, verbose=0)
 
             fig = go.Figure()
             for i, name in enumerate(label_encoder.classes_):
@@ -297,9 +326,9 @@ with tabs[3]:
 # ---------------------------------------------------------------------------
 with tabs[4]:
     active_cfg, is_demo = active_config()
-    st.subheader("Predict on a Row")
+    st.subheader("Predict on a Sample Window")
     if is_demo:
-        st.info("Using the auto-generated demo model (no real trained model found in `outputs/`).")
+        st.warning("**DEMO MODE** — using the auto-generated demo model (no real trained model found in `outputs/`).")
 
     try:
         model, scaler, label_encoder = load_model_bundle(active_cfg)
@@ -307,42 +336,33 @@ with tabs[4]:
         st.error("No model/scaler/encoder artifacts found. Train a model first.")
         st.stop()
 
-    _, test_df, _ = load_raw_data(active_cfg)
-    from deephar.preprocess import split_features_labels
+    _, test_signals, _ = load_raw_signals(active_cfg, is_demo)
 
-    X_test_raw, y_test_raw = split_features_labels(test_df)
+    st.caption(
+        "Live prediction operates on full raw signal windows (128 timesteps x "
+        f"{len(SIGNAL_CHANNELS)} channels), not single feature rows, since that's what the "
+        "LSTM actually consumes -- pick a sample window from the test set below."
+    )
+    idx = st.number_input("Test window index", min_value=0, max_value=len(test_signals.X) - 1, value=0)
+    window = test_signals.X[idx]
+    true_label = test_signals.y[idx]
 
-    source = st.radio("Row source", ["Sample from test set", "Upload CSV"], horizontal=True)
+    X_scaled = scale_signal_windows(window[None, :, :], scaler)
+    probs = model.predict(X_scaled, verbose=0)[0]
+    pred_idx = int(np.argmax(probs))
+    pred_label = label_encoder.classes_[pred_idx]
 
-    row = None
-    true_label = None
-    if source == "Sample from test set":
-        idx = st.number_input("Row index", min_value=0, max_value=len(X_test_raw) - 1, value=0)
-        row = X_test_raw.iloc[[idx]]
-        true_label = y_test_raw.iloc[idx]
-    else:
-        uploaded = st.file_uploader("CSV with the same feature columns as training data", type="csv")
-        if uploaded is not None:
-            upload_df = pd.read_csv(uploaded)
-            missing = set(X_test_raw.columns) - set(upload_df.columns)
-            if missing:
-                st.error(f"Uploaded CSV is missing {len(missing)} expected feature column(s).")
-            else:
-                row = upload_df[X_test_raw.columns].iloc[[0]]
+    st.metric("Predicted Activity", pred_label)
+    st.write(f"True label: **{true_label}** {'✅' if true_label == pred_label else '❌'}")
 
-    if row is not None:
-        X_scaled = scaler.transform(row)
-        X_reshaped = X_scaled.reshape(1, 1, X_scaled.shape[1])
-        probs = model.predict(X_reshaped, verbose=0)[0]
-        pred_idx = int(np.argmax(probs))
-        pred_label = label_encoder.classes_[pred_idx]
+    prob_df = pd.DataFrame({"Activity": label_encoder.classes_, "Probability": probs}).sort_values(
+        "Probability", ascending=False
+    )
+    fig = px.bar(prob_df, x="Probability", y="Activity", orientation="h")
+    st.plotly_chart(fig, use_container_width=True)
 
-        st.metric("Predicted Activity", pred_label)
-        if true_label is not None:
-            st.write(f"True label: **{true_label}** {'✅' if true_label == pred_label else '❌'}")
-
-        prob_df = pd.DataFrame({"Activity": label_encoder.classes_, "Probability": probs}).sort_values(
-            "Probability", ascending=False
-        )
-        fig = px.bar(prob_df, x="Probability", y="Activity", orientation="h")
-        st.plotly_chart(fig, use_container_width=True)
+    channel = st.selectbox("Show channel", SIGNAL_CHANNELS, index=SIGNAL_CHANNELS.index("total_acc_x"), key="live_pred_channel")
+    fig = go.Figure()
+    fig.add_scatter(y=window[:, SIGNAL_CHANNELS.index(channel)], mode="lines")
+    fig.update_layout(title=f"Selected window — {channel}", xaxis_title="Timestep", yaxis_title=channel)
+    st.plotly_chart(fig, use_container_width=True)

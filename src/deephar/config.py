@@ -28,6 +28,7 @@ def _load_yaml(path: Path) -> dict[str, Any]:
 class DataConfig:
     train_csv: Path
     test_csv: Path
+    raw_dir: Path  # data/UCI_HAR_Dataset -- raw Inertial Signals + subject/activity ids
     synthetic_samples_train: int
     synthetic_samples_test: int
     synthetic_n_features: int
@@ -42,8 +43,10 @@ class PreprocessConfig:
 class ModelConfig:
     lstm_units_1: int
     lstm_units_2: int
+    num_lstm_layers: int
     dense_units: int
     dropout: float
+    learning_rate: float
 
 
 @dataclass
@@ -52,6 +55,13 @@ class TrainConfig:
     batch_size: int
     early_stopping_patience: int
     monitor: str
+
+
+@dataclass
+class TuningConfig:
+    max_trials: int
+    epochs_per_trial: int
+    executions_per_trial: int
 
 
 @dataclass
@@ -69,6 +79,7 @@ class Config:
     preprocess: PreprocessConfig
     model: ModelConfig
     train: TrainConfig
+    tuning: TuningConfig
     paths: PathsConfig
     raw: dict[str, Any] = field(default_factory=dict)
 
@@ -93,6 +104,7 @@ def load_config(config_path: Path | str | None = None) -> Config:
     preprocess_raw = raw.get("preprocess", {})
     model_raw = raw.get("model", {})
     train_raw = raw.get("train", {})
+    tuning_raw = raw.get("tuning", {})
     paths_raw = raw.get("paths", {})
 
     return Config(
@@ -100,6 +112,7 @@ def load_config(config_path: Path | str | None = None) -> Config:
         data=DataConfig(
             train_csv=resolve(data_raw.get("train_csv", "data/train.csv")),
             test_csv=resolve(data_raw.get("test_csv", "data/test.csv")),
+            raw_dir=resolve(data_raw.get("raw_dir", "data/UCI_HAR_Dataset")),
             synthetic_samples_train=data_raw.get("synthetic_samples_train", 1200),
             synthetic_samples_test=data_raw.get("synthetic_samples_test", 300),
             synthetic_n_features=data_raw.get("synthetic_n_features", 561),
@@ -108,16 +121,23 @@ def load_config(config_path: Path | str | None = None) -> Config:
             val_split=preprocess_raw.get("val_split", 0.2),
         ),
         model=ModelConfig(
-            lstm_units_1=model_raw.get("lstm_units_1", 100),
-            lstm_units_2=model_raw.get("lstm_units_2", 50),
+            lstm_units_1=model_raw.get("lstm_units_1", 64),
+            lstm_units_2=model_raw.get("lstm_units_2", 32),
+            num_lstm_layers=model_raw.get("num_lstm_layers", 2),
             dense_units=model_raw.get("dense_units", 50),
             dropout=model_raw.get("dropout", 0.2),
+            learning_rate=model_raw.get("learning_rate", 1e-3),
         ),
         train=TrainConfig(
             epochs=train_raw.get("epochs", 100),
-            batch_size=train_raw.get("batch_size", 32),
+            batch_size=train_raw.get("batch_size", 64),
             early_stopping_patience=train_raw.get("early_stopping_patience", 15),
             monitor=train_raw.get("monitor", "val_accuracy"),
+        ),
+        tuning=TuningConfig(
+            max_trials=tuning_raw.get("max_trials", 15),
+            epochs_per_trial=tuning_raw.get("epochs_per_trial", 10),
+            executions_per_trial=tuning_raw.get("executions_per_trial", 1),
         ),
         paths=PathsConfig(
             outputs_dir=resolve(paths_raw.get("outputs_dir", "outputs")),

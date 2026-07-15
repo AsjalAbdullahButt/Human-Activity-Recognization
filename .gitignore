@@ -8,8 +8,7 @@ build/
 dist/
 
 # Data (real dataset is downloaded separately, see scripts/download_data.py)
-data/*.csv
-data/raw/
+data/
 
 # AppleDouble/zip-extraction junk
 __MACOSX/
