@@ -27,7 +27,6 @@ import streamlit as st
 
 from deephar.config import load_config, set_global_seed
 from deephar.data import ACTIVITY_LABELS, SIGNAL_CHANNELS, load_feature_csv_data, load_signal_data
-from deephar.preprocess import split_features_labels
 
 st.set_page_config(page_title="DeepHAR", page_icon="\U0001f3c3", layout="wide")
 
