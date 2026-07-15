@@ -1,0 +1,29 @@
+seed: 42
+
+data:
+  train_csv: data/train.csv
+  test_csv: data/test.csv
+  synthetic_samples_train: 1200
+  synthetic_samples_test: 300
+  synthetic_n_features: 561
+
+preprocess:
+  val_split: 0.2
+
+model:
+  lstm_units_1: 100
+  lstm_units_2: 50
+  dense_units: 50
+  dropout: 0.2
+
+train:
+  epochs: 100
+  batch_size: 32
+  early_stopping_patience: 15
+  monitor: val_accuracy
+
+paths:
+  outputs_dir: outputs
+  models_dir: outputs/models
+  plots_dir: outputs/plots
+  metrics_dir: outputs/metrics

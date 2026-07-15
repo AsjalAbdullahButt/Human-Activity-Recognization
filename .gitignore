@@ -1,0 +1,29 @@
+# Python
+__pycache__/
+*.pyc
+*.egg-info/
+.venv/
+venv/
+build/
+dist/
+
+# Data (real dataset is downloaded separately, see scripts/download_data.py)
+data/*.csv
+
+# Runtime artifacts
+outputs/
+har_results/
+
+# Legacy script's own output dir, if run directly
+legacy/har_results/
+
+# Editor/OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Test/tooling
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/

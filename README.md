@@ -1,85 +1,112 @@
-# DeepHAR – Human Activity Recognition with RNN
+# DeepHAR – Human Activity Recognition with LSTM
 
-DeepHAR is a deep learning-based project designed to classify human activities from motion sensor data using a Recurrent Neural Network (RNN). The system is trained and evaluated using time-series sensor data, providing a robust and visual approach to understanding human movement patterns.
+DeepHAR classifies human activities (walking, sitting, standing, laying, etc.)
+from the UCI HAR smartphone sensor dataset using an LSTM/RNN, with a Streamlit
+app for exploring the data and model.
 
----
-
-## 🗃️ Dataset
-
-The system uses sensor-based time-series data to classify multiple human activities. The following files are used:
-
-- `train.csv` – Labeled data for training the model.
-- This is a large file and it can't be uploaded on GitHib ,it can be found on Kaggle in Human Activity Recognization datasets.
-- `test.csv` – Data for testing the model’s performance.
-
-Each row in the dataset contains:
-- Sensor readings over time (e.g., accelerometer, gyroscope)
-- Activity labels (e.g., Walking, Running, Sitting)
+This repo runs out of the box on **synthetic data** — no dataset download
+required. Point it at the real UCI HAR CSVs (see below) when you want real
+results.
 
 ---
 
-## 🧠 Model Architecture
+## Project layout
 
-The model is built using a Recurrent Neural Network (RNN) architecture, suitable for sequence data. Key features include:
+```text
+src/deephar/        Core package: config, data loading, preprocessing, model,
+                     training, evaluation, visualization
+scripts/
+  download_data.py  Helper + instructions for fetching the real UCI HAR dataset
+app.py               Streamlit app (multi-tab: overview, data, training,
+                      performance, live prediction)
+tests/                pytest suite
+legacy/HAR.py         Original monolithic script, kept as-is for reference
+config.yaml           Central configuration (paths, hyperparameters, seed)
+data/                 Put train.csv / test.csv here (gitignored)
+outputs/              Models, plots, metrics produced by a training run (gitignored)
+```
 
-- Input layer: Handles time-series sensor data
-- RNN Layers: Captures temporal dependencies
-- Dense Output Layer: Softmax activation for multi-class classification
-
-Two saved models are included:
-- `har_rnn_model.h5` – Initial trained RNN
-- `best_rnn_model.h5` – Final model after tuning and validation
-
----
-
-## 🏋️ Training and Evaluation
-
-The model was trained using categorical cross-entropy loss and evaluated on multiple metrics.
-
-### 📈 Training Artifacts:
-- `training_history.csv` and `training_history.png`: Visualizes loss and accuracy across epochs
-- `performance_metrics_by_class.png`: Class-wise precision, recall, F1-score
-- `classification_metrics.csv`: Numerical metrics for each class
-
----
-
-## 📊 Visual Results
-
-A set of visualizations are provided for performance interpretation:
-
-| Visualization | Description |
-|---------------|-------------|
-| `class_distribution.png` | Distribution of classes in the dataset |
-| `confusion_matrix.png` | Raw confusion matrix |
-| `normalized_confusion_matrix.png` | Normalized confusion matrix |
-| `learning_curves.png` | Accuracy/Loss curves during training |
-| `pca_visualization.png` | PCA of feature space for 2D visual inspection |
-| `roc_curves.png` | ROC curves for multi-class classification |
-| `performance_dashboard.png` | Summary view of all key metrics |
-| `performance_metrics_by_class.png` | Class-specific precision/recall/F1 |
-
----
-
-## 📂 Predictions and Reporting
-
-The model predictions and reports include:
-
-- `predictions.csv` – Predicted activity labels for the test set
-- `har_prediction_report.txt` – Full evaluation report with insights
-
----
-
-## 📑 Reference
-
-This work references methods and concepts from:
-
-- `sensors-17-02556-v3.pdf` – Research literature on HAR using sensor data
-
----
-
-## 🚀 Usage
-
-To run the model:
+## Setup
 
 ```bash
-python project2.py
+pip install -r requirements.txt
+pip install -e .
+```
+
+Keras 3 is used with the `torch` backend by default (set in
+`src/deephar/__init__.py`), because TensorFlow does not yet ship wheels for
+every Python version. If your Python version has a TensorFlow wheel, you can
+instead `pip install tensorflow` and set `KERAS_BACKEND=tensorflow`.
+
+## Getting the real dataset (optional)
+
+The `train.csv`/`test.csv` originally shipped in this repo were 404
+placeholder stubs — the real dataset is too large for GitHub. To use it:
+
+1. Download from the [UCI ML Repository](https://archive.ics.uci.edu/dataset/240/human+activity+recognition+using+smartphones)
+   or the [Kaggle mirror](https://www.kaggle.com/datasets/uciml/human-activity-recognition-with-smartphones).
+2. Copy `train.csv` and `test.csv` into `data/`.
+3. Or run `python scripts/download_data.py` (requires `kagglehub` + Kaggle
+   credentials) for an automated fetch.
+
+Without the real data, `deephar.data.load_data()` automatically falls back to
+a synthetic dataset shaped like UCI HAR (six activity classes, per-class
+Gaussian clusters, `subject`/`Activity` columns) so every part of the
+pipeline and app still runs.
+
+## Training
+
+```bash
+python -m deephar.train
+```
+
+This loads data (real if present in `data/`, else synthetic), does a
+stratified train/val split, trains the LSTM, and writes to `outputs/`:
+
+- `outputs/models/har_model.keras`, `best_model.keras` — trained model
+- `outputs/models/scaler.joblib`, `label_encoder.joblib` — fitted preprocessing,
+  needed to run inference on new raw rows
+- `outputs/plots/*.png` — class distribution, confusion matrices, ROC curves,
+  PCA, training curves
+- `outputs/metrics/*` — classification report, per-class metrics, predictions
+
+Hyperparameters, paths, and the random seed all live in `config.yaml`.
+
+## Streamlit app
+
+```bash
+streamlit run app.py
+```
+
+Tabs:
+
+- **Overview** — project summary, headline accuracy/F1
+- **Data Explorer** — class distribution, sample rows, feature stats, PCA scatter
+- **Training** — trigger a training run, view learning curves
+- **Performance** — confusion matrix, per-class precision/recall/F1, ROC curves
+- **Live Prediction** — load the persisted model/scaler/encoder and predict on
+  an uploaded or sample row
+
+If `outputs/` doesn't have artifacts yet, the app falls back to synthetic/demo
+data so every tab still renders — use the Training tab to produce real ones.
+
+## Tests
+
+```bash
+pytest -q
+```
+
+## Known limitations / suggested next steps
+
+- **The LSTM sees only 1 timestep.** The pre-extracted 561-feature UCI HAR
+  rows have no time axis, so the LSTM layers currently behave like an
+  expensive Dense layer. For a temporally meaningful model, retrain on the
+  raw `Inertial Signals/*.txt` windows (128 timesteps × 9 channels) instead
+  of the engineered feature CSVs.
+- Class weighting / focal loss if the real dataset's class balance turns out
+  to be skewed.
+- Hyperparameter search (units, dropout, learning rate) via Keras Tuner or
+  Optuna.
+- Group (subject-wise) cross-validation in addition to the stratified split,
+  since HAR generalization across unseen subjects is the harder and more
+  realistic evaluation.
