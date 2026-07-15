@@ -9,6 +9,11 @@ dist/
 
 # Data (real dataset is downloaded separately, see scripts/download_data.py)
 data/*.csv
+data/raw/
+
+# AppleDouble/zip-extraction junk
+__MACOSX/
+._*
 
 # Runtime artifacts
 outputs/
