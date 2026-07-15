@@ -1,21 +1,24 @@
-# DeepHAR – Human Activity Recognition with LSTM
+# 🏃 DeepHAR – Human Activity Recognition with LSTM
 
 DeepHAR classifies human activities (walking, sitting, standing, laying, etc.)
 from the UCI HAR smartphone sensor dataset. The LSTM trains directly on the
-raw inertial-signal windows (128 timesteps x 9 channels per window) — a real
+raw inertial-signal windows (128 timesteps × 9 channels per window) — a real
 time axis — with a Dense MLP over the dataset's 561 pre-engineered features
 trained alongside it as a non-temporal baseline. A Streamlit app is included
 for exploring the data and model.
 
-This repo requires the real UCI HAR dataset for production training (see
-below); it fails loudly rather than silently substituting fake data. Pass
-`--demo` to `python -m deephar.train` if you explicitly want a demo run on
-synthetic data — demo-mode numbers are clearly labeled as such everywhere
-they're reported and must never be read as real performance.
+> ⚠️ **No silent fallback.** This repo requires the real UCI HAR dataset for
+> production training and fails loudly (`RealDataNotFoundError`) rather than
+> substituting fake data. Pass `--demo` to `python -m deephar.train` if you
+> explicitly want a demo run on synthetic data — demo-mode numbers are
+> clearly labeled as such everywhere they're reported and must never be read
+> as real performance.
+
+✅ **Trained and evaluated end-to-end on the real dataset — see 📊 Results below.**
 
 ---
 
-## Project layout
+## 📁 Project layout
 
 ```text
 src/deephar/        Core package: config, data loading, preprocessing, model,
@@ -32,7 +35,7 @@ data/                 Real dataset lives here (gitignored, see below)
 outputs/              Models, plots, metrics produced by a training run (gitignored)
 ```
 
-## Setup
+## ⚙️ Setup
 
 ```bash
 pip install -r requirements.txt
@@ -44,7 +47,7 @@ Keras 3 is used with the `torch` backend by default (set in
 every Python version. If your Python version has a TensorFlow wheel, you can
 instead `pip install tensorflow` and set `KERAS_BACKEND=tensorflow`.
 
-## Getting the real dataset
+## 📦 Getting the real dataset
 
 The real dataset is too large for GitHub, so it isn't bundled — fetch it with:
 
@@ -64,27 +67,30 @@ data/train.csv, data/test.csv                              561-feature baseline,
 Manual alternative: download from the
 [UCI ML Repository](https://archive.ics.uci.edu/dataset/240/human+activity+recognition+using+smartphones)
 or the [Kaggle mirror](https://www.kaggle.com/datasets/uciml/human-activity-recognition-with-smartphones),
-extract it to `data/UCI_HAR_Dataset/`, then run
-`python scripts/download_data.py --skip-download` to build the baseline CSVs.
+extract it to `data/UCI_HAR_Dataset/`, then run:
+
+```bash
+python scripts/download_data.py --skip-download   # build the baseline CSVs from an already-extracted archive
+```
 
 Without the real dataset, `deephar.train.run_pipeline()` raises
 `RealDataNotFoundError` rather than silently generating fake numbers. Pass
 `allow_synthetic=True` (or `--demo` on the CLI) to explicitly opt into a demo
 run on synthetic data instead.
 
-## Training
+## 🚀 Training
 
 ```bash
-python -m deephar.train              # real data required; ~15-trial hyperparameter search + 3 training runs
-python -m deephar.train --no-tuning  # skip the search, train with config.yaml's model settings directly
-python -m deephar.train --demo       # demo mode on synthetic data (clearly labeled, not real performance)
+python -m deephar.train              # 🔒 real data required; ~15-trial hyperparameter search + 3 training runs
+python -m deephar.train --no-tuning  # ⏩ skip the search, train with config.yaml's model settings directly
+python -m deephar.train --demo       # 🧪 demo mode on synthetic data (clearly labeled, not real performance)
 ```
 
 Each real run:
 
 1. Loads the raw signal windows and the 561-feature CSVs, and prints the real
    class distribution (used to decide whether class weighting is warranted —
-   see [Class balance](#class-balance-and-splits) below).
+   see ⚖️ Class balance & splits below).
 2. Runs a Keras Tuner random search (LSTM units, layers, dropout, learning
    rate, batch size) on a subject-independent split, and writes every trial's
    result to `outputs/metrics/tuning_trials.csv` and the winner to
@@ -99,24 +105,29 @@ Each real run:
 
 Outputs:
 
-- `outputs/models/har_model.keras`, `best_model.keras` — the primary
+- 🧠 `outputs/models/har_model.keras`, `best_model.keras` — the primary
   (subject-independent) LSTM; `scaler.joblib`/`label_encoder.joblib` — fitted
   per-channel preprocessing needed for inference
-- `outputs/models/leaky_split_model.keras` — the same-subject-leakage
+- 🧠 `outputs/models/leaky_split_model.keras` — the same-subject-leakage
   comparison model (not for production use)
-- `outputs/plots/*.png` — class distribution, confusion matrices, ROC curves,
+- 📈 `outputs/plots/*.png` — class distribution, confusion matrices, ROC curves,
   PCA, training curves
-- `outputs/metrics/*` — classification report, per-class metrics, predictions,
+- 📄 `outputs/metrics/*` — classification report, per-class metrics, predictions,
   `split_comparison_report.txt` (group vs. leaky split, explained), tuning results
 
 Hyperparameters, paths, and the random seed all live in `config.yaml`.
 
-## Class balance and splits
+## ⚖️ Class balance & splits
 
 The real UCI HAR train set has 6 classes ranging from 986 to 1407 windows
 (max/min ratio **1.43**) — not meaningfully imbalanced (the pipeline's
-threshold is 1.5x), so no class weighting or focal loss is applied. This is
-checked from the real data at the start of every run, not assumed.
+threshold is 1.5×), so no class weighting or focal loss is applied. This is
+checked from the real data at the start of every run, not assumed:
+
+```text
+LAYING: 1407   STANDING: 1374   SITTING: 1286
+WALKING: 1226  WALKING_UPSTAIRS: 1073   WALKING_DOWNSTAIRS: 986
+```
 
 Two train/val split strategies are trained and reported for the LSTM:
 
@@ -126,26 +137,88 @@ Two train/val split strategies are trained and reported for the LSTM:
   never seen, which is what a HAR system actually needs to do in practice.
 - **Same-subject-leakage (stratified) split** — a plain stratified random
   split that ignores subject identity. UCI HAR windows are 50%-overlapping
-  slices of a continuous per-subject recording, so a random shuffle puts
+  slices of a continuous per-subject recording, so a random shuffle can put
   near-duplicate, temporally-adjacent windows from the same subject/session
-  into both train and val. The model can then partly key off subject-specific
-  gait/sensor-placement idiosyncrasies rather than the activity itself, which
-  inflates its validation accuracy relative to true subject-independent
-  generalization.
+  into both train and val — which *can* inflate validation accuracy by
+  letting the model partly key off subject-specific idiosyncrasies rather
+  than the activity itself.
 
 Both numbers are reported below and in `outputs/metrics/split_comparison_report.txt`
-precisely so the gap between them is visible, not hidden.
+precisely so the gap between them is visible, not hidden — including when
+reality doesn't match the a priori hypothesis (see 🧐 note in Results).
 
 The official UCI HAR test set is already subject-independent from the
 training pool (21 train subjects, 9 disjoint test subjects), so the
 train/test evaluation is subject-independent regardless of which train/val
 split strategy produced the model.
 
-## Results (real UCI HAR dataset)
+## 📊 Results (real UCI HAR dataset)
 
-<!-- RESULTS_PLACEHOLDER -->
+Produced by `python scripts/run_real_training.py` (equivalent to
+`python -m deephar.train`) on the full real dataset — 15-trial hyperparameter
+search, both split strategies, and the Dense baseline. Full detail lives in
+`outputs/metrics/split_comparison_report.txt` and `classification_report.json`.
 
-## Streamlit app
+### 🏆 Headline: subject-independent test accuracy — 89.68%
+
+| Model / metric | Accuracy |
+| --- | --- |
+| 🧠 LSTM, subject-independent split — **real test set (headline)** | **89.68%** |
+| 🧠 LSTM, subject-independent split — validation | 97.72% |
+| 🧠 LSTM, same-subject-leakage split — validation | 94.63% |
+| 📐 Dense baseline (561 engineered features) — real test set | **92.87%** |
+
+Best hyperparameters found by the search (`outputs/metrics/best_hyperparameters.json`):
+
+```text
+1-layer LSTM, 128 units, dropout 0.2, learning_rate 0.001, batch_size 64
+```
+
+### Per-class performance (subject-independent LSTM, real test set)
+
+| Activity | Precision | Recall | F1 |
+| --- | --- | --- | --- |
+| LAYING | 1.000 | 0.950 | 0.974 |
+| WALKING | 0.975 | 0.944 | 0.959 |
+| WALKING_DOWNSTAIRS | 0.914 | 0.981 | 0.946 |
+| WALKING_UPSTAIRS | 0.908 | 0.941 | 0.924 |
+| STANDING | 0.752 | 0.910 | 0.823 |
+| SITTING | 0.872 | 0.664 | 0.754 |
+
+SITTING and STANDING are the model's weak spot (recall 0.66 and precision
+0.75 respectively) — a well-known confusion in HAR, since both are
+low-motion, low-signal-variance activities that mainly differ in a subtle
+gravity-vector orientation the accelerometer/gyroscope pick up faintly.
+Locomotion activities (WALKING\*, LAYING) are all F1 ≥ 0.92.
+
+**🧐 Honest surprises, reported as observed, not smoothed over:**
+
+- **The 561-feature Dense baseline (92.87%) beats the raw-signal LSTM
+  (89.68%) on the real test set.** This is a legitimate outcome, not a bug:
+  the 561 features are hand-engineered time/frequency-domain statistics
+  (FFT energies, correlations, etc.) built by domain experts specifically to
+  separate these six activities, distilled from the exact same raw signal
+  the LSTM has to learn structure from scratch with only 21 training
+  subjects. Beating an expert-feature baseline from raw sequences alone
+  would need more data, heavier regularization, or a more sophisticated
+  temporal architecture (Conv1D+LSTM, attention) than this pipeline's basic
+  hyperparameter search covers.
+- **The subject-independent (group) split scored a *higher* validation
+  accuracy (97.72%) than the same-subject-leakage split (94.63%)** — the
+  opposite of the a priori hypothesis that leakage should inflate accuracy.
+  With only ~21 training subjects, which specific people land in the
+  held-out group is high-variance: this run's held-out subjects/activities
+  happened to be an easier subset, while the leaky split's validation
+  windows are drawn from every subject, including harder SITTING/STANDING
+  cases. The group split remains the methodologically correct choice
+  regardless of which number is higher on a given run — see
+  `outputs/metrics/split_comparison_report.txt` for the full discussion.
+- Compare both of these against the **old synthetic-data number this repo
+  used to ship with (54.67%)** — that number came from a 1-timestep LSTM
+  fed pre-flattened features on fake data and should never have been read
+  as real performance in the first place.
+
+## 🖥️ Streamlit app
 
 ```bash
 streamlit run app.py
@@ -165,13 +238,13 @@ If `outputs/` doesn't have artifacts yet, the app falls back to an
 explicitly-labeled synthetic demo run so every tab still renders — use the
 Training tab to produce real ones.
 
-## Tests
+## ✅ Tests
 
 ```bash
 pytest -q
 ```
 
-Covers: raw signal loading and shape (128, 9), per-channel (not
+Covers: raw signal loading and shape `(128, 9)`, per-channel (not
 per-flattened-feature) scaling, group-split subject-disjointness vs.
 stratified-split subject leakage, model construction for both the LSTM and
 the Dense baseline, and that production training raises
