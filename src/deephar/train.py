@@ -62,11 +62,11 @@ def _fit_with_callbacks(model, X_train, y_train, X_val, y_val, config: Config, c
     return model, history, hist_df
 
 
-def train_rnn_model(model, X_train, y_train, X_val, y_val, config: Config):
+def train_rnn_model(model, X_train, y_train, X_val, y_val, config: Config, **fit_kwargs):
     """Train the primary (subject-independent split) LSTM and save it as the
     production model artifact."""
     model, history, _ = _fit_with_callbacks(
-        model, X_train, y_train, X_val, y_val, config, "best_model.keras", "training_history.csv"
+        model, X_train, y_train, X_val, y_val, config, "best_model.keras", "training_history.csv", **fit_kwargs
     )
     model.save(config.paths.models_dir / "har_model.keras")
     return model, history

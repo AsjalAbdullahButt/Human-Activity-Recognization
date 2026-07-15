@@ -1,12 +1,12 @@
-from deephar.data import load_data
+from deephar.data import load_signal_data
 from deephar.evaluate import evaluate_model
 from deephar.model import build_rnn_model
-from deephar.preprocess import prepare_data
+from deephar.preprocess import prepare_signal_data
 
 
 def test_evaluate_model_produces_expected_artifacts(small_config):
-    train_df, test_df, _ = load_data(small_config)
-    prepared = prepare_data(train_df, test_df, small_config)
+    train, test, _ = load_signal_data(small_config, allow_synthetic=True)
+    prepared = prepare_signal_data(train, test, small_config, group_split=True)
 
     input_shape = (prepared.X_train.shape[1], prepared.X_train.shape[2])
     num_classes = prepared.y_train.shape[1]
@@ -53,8 +53,8 @@ def test_evaluate_model_handles_class_with_zero_predictions(small_config):
     must not raise or emit invalid-value warnings here."""
     import numpy as np
 
-    train_df, test_df, _ = load_data(small_config)
-    prepared = prepare_data(train_df, test_df, small_config)
+    train, test, _ = load_signal_data(small_config, allow_synthetic=True)
+    prepared = prepare_signal_data(train, test, small_config, group_split=True)
 
     input_shape = (prepared.X_train.shape[1], prepared.X_train.shape[2])
     num_classes = prepared.y_train.shape[1]

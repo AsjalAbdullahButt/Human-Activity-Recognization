@@ -14,7 +14,10 @@ from deephar.config import load_config  # noqa: E402
 @pytest.fixture
 def small_config(tmp_path):
     """A config pointing all outputs at a pytest tmp_path, with tiny sizes
-    so tests run fast and never touch the project's real outputs/ dir."""
+    so tests run fast and never touch the project's real outputs/ dir. Points
+    data/raw_dir paths at locations that don't exist, so tests exercise the
+    "real data missing" path unless a test explicitly opts into synthetic
+    data or writes its own real-shaped files there."""
     config = load_config()
     config.paths.outputs_dir = tmp_path / "outputs"
     config.paths.models_dir = tmp_path / "outputs" / "models"
@@ -22,9 +25,12 @@ def small_config(tmp_path):
     config.paths.metrics_dir = tmp_path / "outputs" / "metrics"
     config.data.train_csv = tmp_path / "data" / "train.csv"
     config.data.test_csv = tmp_path / "data" / "test.csv"
+    config.data.raw_dir = tmp_path / "data" / "UCI_HAR_Dataset"
     config.data.synthetic_samples_train = 120
     config.data.synthetic_samples_test = 40
     config.data.synthetic_n_features = 20
     config.train.epochs = 2
     config.train.batch_size = 16
+    config.tuning.max_trials = 2
+    config.tuning.epochs_per_trial = 2
     return config

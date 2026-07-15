@@ -18,9 +18,6 @@ __MACOSX/
 outputs/
 har_results/
 
-# Legacy script's own output dir, if run directly
-legacy/har_results/
-
 # Editor/OS
 .vscode/
 .idea/
